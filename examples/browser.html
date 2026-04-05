@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JSLite Browser Example</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5efe2;
+        --panel: #fffaf0;
+        --ink: #1f1c17;
+        --muted: #6a6256;
+        --line: #d2c5ae;
+        --accent: #8f3b1b;
+        --accent-strong: #6c250d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(143, 59, 27, 0.18), transparent 28rem),
+          linear-gradient(180deg, #f9f4e8 0%, var(--bg) 100%);
+      }
+
+      main {
+        width: min(980px, calc(100vw - 2rem));
+        margin: 2rem auto;
+        padding: 1.5rem;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 250, 240, 0.9);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 18px 60px rgba(53, 39, 23, 0.12);
+      }
+
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 0.95;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .meta {
+        margin-top: 1rem;
+        padding: 0.9rem 1rem;
+        border-left: 4px solid var(--accent);
+        background: rgba(143, 59, 27, 0.08);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.3fr 0.9fr;
+        gap: 1rem;
+        margin-top: 1.5rem;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+      }
+
+      .panel h2 {
+        margin: 0;
+        font-size: 1rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      textarea,
+      pre {
+        width: 100%;
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf7;
+        color: var(--ink);
+        font: 0.95rem/1.5 "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      }
+
+      textarea {
+        min-height: 24rem;
+        padding: 1rem;
+        resize: vertical;
+      }
+
+      pre {
+        min-height: 7rem;
+        padding: 1rem;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 0.7rem 1.1rem;
+        font: inherit;
+        cursor: pointer;
+        color: #fff8ef;
+        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+      }
+
+      button.secondary {
+        color: var(--ink);
+        background: #eadfc9;
+      }
+
+      code {
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      }
+
+      @media (max-width: 820px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        textarea {
+          min-height: 18rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>JSLite In The Browser</h1>
+      <p>Parser-only sandbox execution with imported globals, callable functions, and host class instances.</p>
+      <div class="meta">
+        Serve this repository over HTTP and open <code>/examples/browser.html</code>.
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Script</h2>
+          <textarea id="source"></textarea>
+          <div class="actions">
+            <button id="run" type="button">Run Script</button>
+            <button id="reset" class="secondary" type="button">Reset Example</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Result</h2>
+          <pre id="result"></pre>
+          <h2>Captured Output</h2>
+          <pre id="output"></pre>
+          <h2>Host Globals</h2>
+          <pre id="globals"></pre>
+        </section>
+      </div>
+    </main>
+
+    <script type="module">
+      import { Engine } from "../src/index.js";
+
+      class Counter {
+        constructor(value = 0) {
+          this.value = value;
+        }
+
+        inc(step = 1) {
+          this.value += step;
+          return this.value;
+        }
+
+        child() {
+          return new Counter(this.value + 10);
+        }
+      }
+
+      const defaultSource = `
+console.log("user", user.name);
+console.log("version", version);
+
+counter.inc(2);
+
+({
+  current: counter.value,
+  doubled: double(counter.value),
+  sameType: counter instanceof Counter,
+  childValue: counter.child().value,
+  constructed: new Counter(9).value
+});
+`.trim();
+
+      const sourceEl = document.querySelector("#source");
+      const resultEl = document.querySelector("#result");
+      const outputEl = document.querySelector("#output");
+      const globalsEl = document.querySelector("#globals");
+      const runEl = document.querySelector("#run");
+      const resetEl = document.querySelector("#reset");
+
+      function createGlobals() {
+        return {
+          user: { name: "Ada" },
+          version: "browser-demo",
+          double: (n) => n * 2,
+          counter: new Counter(1),
+          Counter,
+        };
+      }
+
+      function formatValue(value) {
+        if (typeof value === "string") {
+          return value;
+        }
+
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch {
+          return String(value);
+        }
+      }
+
+      function renderGlobals(globals) {
+        globalsEl.textContent = JSON.stringify({
+          user: globals.user,
+          version: globals.version,
+          double: "[Function]",
+          counter: { value: globals.counter.value },
+          Counter: "[Class Counter]",
+        }, null, 2);
+      }
+
+      function runExample() {
+        const engine = new Engine();
+        const globals = createGlobals();
+
+        renderGlobals(globals);
+
+        try {
+          const result = engine.eval(sourceEl.value, globals);
+          resultEl.textContent = formatValue(result);
+          outputEl.textContent = engine.getOutput() || "(no console output)";
+        } catch (error) {
+          resultEl.textContent = `${error.name}: ${error.message}`;
+          outputEl.textContent = engine.getOutput() || "(no console output)";
+        }
+      }
+
+      sourceEl.value = defaultSource;
+      runEl.addEventListener("click", runExample);
+      resetEl.addEventListener("click", () => {
+        sourceEl.value = defaultSource;
+        runExample();
+      });
+
+      runExample();
+    </script>
+  </body>
+</html>

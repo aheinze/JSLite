@@ -1,0 +1,26 @@
+{
+  "name": "jslite",
+  "version": "0.1.0",
+  "description": "Quick and dirty parser-based sandboxed JavaScript interpreter.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": "./src/index.js",
+  "bin": {
+    "jslite": "bin/jslite.js"
+  },
+  "scripts": {
+    "test": "node --test tests/compat-ported.test.js tests/compat-manual.test.js",
+    "test:all": "node --test",
+    "build": "esbuild src/index.js --bundle --format=esm --platform=browser --minify --outfile=dist/jslite.esm.js",
+    "serve:example": "python3 -m http.server 8000"
+  },
+  "keywords": [
+    "interpreter",
+    "sandbox",
+    "javascript"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}
