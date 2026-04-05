@@ -4,6 +4,21 @@
 
 Execution is parser-based only. Source is tokenized, parsed, compiled into JSLite's internal program format, and executed by the repo's own runtime. Where the bytecode compiler supports a construct it is used automatically; otherwise execution falls back to the AST interpreter. There is no `node:vm` path and no alternate engine backend.
 
+## Possible Use Cases
+
+- Browser-side execution of user-authored snippets without handing execution to the host JS engine.
+- Embedded scripting for apps, games, automation tools, or low-code systems that need a small JS-like language.
+- Evaluating user-defined formulas, rules, conditions, or transformations against a controlled globals object.
+- Safe-ish plugin hooks where you want to expose a narrow API surface instead of full host access.
+- Running compatibility fixtures, regression suites, or generated scripts inside a deterministic custom runtime.
+- Educational or experimental interpreter work where owning the parser and runtime behavior matters more than raw speed.
+
+## Where It Fits Poorly
+
+- Hot paths, numeric-heavy workloads, or large script volumes where native JS performance matters.
+- Security-critical isolation requirements where a pragmatic language sandbox is not enough on its own.
+- Full JavaScript platform needs such as DOM APIs, timers, modules, `fetch`, `process`, or `require`.
+
 ## What It Supports
 
 - The practical language surface covered by the local compatibility suite:
@@ -170,4 +185,3 @@ Run the suite:
 ```bash
 npm test
 ```
-
