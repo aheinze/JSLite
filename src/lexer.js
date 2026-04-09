@@ -161,6 +161,44 @@ export class Lexer {
     const line = this.line;
     const column = this.column;
     let value = "";
+
+    if (this.peek() === "0") {
+      const next = this.peek(1);
+
+      if (next === "x" || next === "X") {
+        value += this.advance() + this.advance();
+        if (!this.isHexDigit(this.peek())) {
+          throw new JSLiteSyntaxError("Expected hex digit after 0x", { line, column });
+        }
+        while (!this.isAtEnd() && this.isHexDigit(this.peek())) {
+          value += this.advance();
+        }
+        return { type: "number", value, line, column };
+      }
+
+      if (next === "b" || next === "B") {
+        value += this.advance() + this.advance();
+        if (this.peek() !== "0" && this.peek() !== "1") {
+          throw new JSLiteSyntaxError("Expected binary digit after 0b", { line, column });
+        }
+        while (!this.isAtEnd() && (this.peek() === "0" || this.peek() === "1")) {
+          value += this.advance();
+        }
+        return { type: "number", value, line, column };
+      }
+
+      if (next === "o" || next === "O") {
+        value += this.advance() + this.advance();
+        if (this.peek() < "0" || this.peek() > "7") {
+          throw new JSLiteSyntaxError("Expected octal digit after 0o", { line, column });
+        }
+        while (!this.isAtEnd() && this.peek() >= "0" && this.peek() <= "7") {
+          value += this.advance();
+        }
+        return { type: "number", value, line, column };
+      }
+    }
+
     let sawDot = false;
 
     while (!this.isAtEnd()) {
@@ -178,6 +216,19 @@ export class Lexer {
       }
 
       break;
+    }
+
+    if (!this.isAtEnd() && (this.peek() === "e" || this.peek() === "E")) {
+      value += this.advance();
+      if (!this.isAtEnd() && (this.peek() === "+" || this.peek() === "-")) {
+        value += this.advance();
+      }
+      if (this.isAtEnd() || !this.isDigit(this.peek())) {
+        throw new JSLiteSyntaxError("Expected digit in exponent", { line, column });
+      }
+      while (!this.isAtEnd() && this.isDigit(this.peek())) {
+        value += this.advance();
+      }
     }
 
     return { type: "number", value, line, column };
@@ -675,6 +726,10 @@ export class Lexer {
 
   isDigit(ch) {
     return /[0-9]/.test(ch);
+  }
+
+  isHexDigit(ch) {
+    return /[0-9a-fA-F]/.test(ch);
   }
 
   isAtEnd() {

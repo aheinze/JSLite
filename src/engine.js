@@ -6,10 +6,13 @@ import { Interpreter } from "./interpreter.js";
 import { Parser } from "./parser.js";
 import { HostObjectProxy } from "./runtime.js";
 
+const DEFAULT_CACHE_LIMIT = 256;
+
 export class Engine {
-  constructor() {
+  constructor(options = {}) {
     this.outputLines = [];
     this.compileCache = new Map();
+    this.compileCacheLimit = options.cacheLimit ?? DEFAULT_CACHE_LIMIT;
     this.interpreter = new Interpreter(this.outputLines);
   }
 
@@ -18,12 +21,20 @@ export class Engine {
     const cached = this.compileCache.get(normalizedSource);
 
     if (cached) {
+      this.compileCache.delete(normalizedSource);
+      this.compileCache.set(normalizedSource, cached);
       return cached;
     }
 
     try {
       const program = attachBytecode(compileProgram(new Parser(normalizedSource).parse()));
       const compiled = new CompiledScript(normalizedSource, program);
+
+      if (this.compileCacheLimit > 0 && this.compileCache.size >= this.compileCacheLimit) {
+        const oldest = this.compileCache.keys().next().value;
+        this.compileCache.delete(oldest);
+      }
+
       this.compileCache.set(normalizedSource, compiled);
       return compiled;
     } catch (error) {
@@ -32,7 +43,7 @@ export class Engine {
   }
 
   run(program, globals = {}) {
-    this.outputLines = [];
+    this.outputLines.length = 0;
 
     if (!(program instanceof CompiledScript)) {
       throw new TypeError("Unsupported compiled program");
@@ -55,8 +66,6 @@ export class Engine {
   }
 
   executeProgram(program, globals) {
-    this.interpreter.outputLines = this.outputLines;
-
     try {
       return normalizeUndefined(this.interpreter.execute(program, globals));
     } catch (error) {

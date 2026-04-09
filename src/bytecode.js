@@ -75,6 +75,12 @@ const OP = {
   ENUM_KEYS: 53,
   ITER_VALUES: 54,
   CALL_WITH_THIS: 55,
+  MAKE_ARRAY_SPREAD: 56,
+  CALL_SPREAD: 57,
+  CALL_MEMBER_NAMED_SPREAD: 58,
+  CALL_MEMBER_COMPUTED_SPREAD: 59,
+  CONSTRUCT_SPREAD: 60,
+  CALL_WITH_THIS_SPREAD: 61,
 };
 
 const COMPUTED = Symbol("computed");
@@ -348,6 +354,32 @@ export function executeBytecode(interpreter, executable, env) {
           ip += 1;
           break;
         }
+        case OP.MAKE_ARRAY_SPREAD: {
+          const flags = instruction[1];
+          const count = flags.length;
+          const items = new Array(count);
+          for (let index = count - 1; index >= 0; index -= 1) {
+            items[index] = stack.pop();
+          }
+          const result = [];
+          for (let index = 0; index < count; index += 1) {
+            if (flags[index]) {
+              const v = items[index];
+              if (Array.isArray(v)) {
+                result.push(...v);
+              } else if (typeof v === "string") {
+                result.push(...Array.from(v));
+              } else {
+                result.push(...Array.from(v ?? []));
+              }
+            } else {
+              result.push(items[index]);
+            }
+          }
+          stack.push(result);
+          ip += 1;
+          break;
+        }
         case OP.MAKE_OBJECT: {
           const descriptors = instruction[1];
           const result = createDictionary();
@@ -414,6 +446,45 @@ export function executeBytecode(interpreter, executable, env) {
           break;
         case OP.CONSTRUCT: {
           const args = popArgs(stack, instruction[1]);
+          const callee = stack.pop();
+          stack.push(constructValue(callee, args, interpreter));
+          ip += 1;
+          break;
+        }
+        case OP.CALL_SPREAD: {
+          const args = popSpreadArgs(stack, instruction[1]);
+          const callee = stack.pop();
+          stack.push(callFunction(callee, args, undefined, interpreter));
+          ip += 1;
+          break;
+        }
+        case OP.CALL_WITH_THIS_SPREAD: {
+          const args = popSpreadArgs(stack, instruction[1]);
+          const thisValue = stack.pop();
+          const callee = stack.pop();
+          stack.push(callFunction(callee, args, thisValue, interpreter));
+          ip += 1;
+          break;
+        }
+        case OP.CALL_MEMBER_NAMED_SPREAD: {
+          const args = popSpreadArgs(stack, instruction[2]);
+          const target = stack.pop();
+          const callee = safeGet(target, instruction[1]);
+          stack.push(callFunction(callee, args, target, interpreter));
+          ip += 1;
+          break;
+        }
+        case OP.CALL_MEMBER_COMPUTED_SPREAD: {
+          const args = popSpreadArgs(stack, instruction[1]);
+          const property = stack.pop();
+          const target = stack.pop();
+          const callee = safeGet(target, property);
+          stack.push(callFunction(callee, args, target, interpreter));
+          ip += 1;
+          break;
+        }
+        case OP.CONSTRUCT_SPREAD: {
+          const args = popSpreadArgs(stack, instruction[1]);
           const callee = stack.pop();
           stack.push(constructValue(callee, args, interpreter));
           ip += 1;
@@ -1366,20 +1437,30 @@ function compileExpression(node, context) {
 }
 
 function compileArrayExpression(node, context) {
+  const hasSpread = node.elements.some((el) => el?.type === "SpreadElement");
+
   for (const element of node.elements) {
     if (!element) {
       context.emit(OP.PUSH_CONST, undefined);
       continue;
     }
     if (element.type === "SpreadElement") {
-      return false;
+      if (!compileExpression(element.argument, context)) {
+        return false;
+      }
+      continue;
     }
     if (!compileExpression(element, context)) {
       return false;
     }
   }
 
-  context.emit(OP.MAKE_ARRAY, node.elements.length);
+  if (hasSpread) {
+    const flags = node.elements.map((el) => el?.type === "SpreadElement");
+    context.emit(OP.MAKE_ARRAY_SPREAD, flags);
+  } else {
+    context.emit(OP.MAKE_ARRAY, node.elements.length);
+  }
   return true;
 }
 
@@ -1585,9 +1666,11 @@ function compileCallExpression(node, context) {
     return compileChainExpression(node, context);
   }
 
+  const spread = hasSpreadArgs(node.arguments);
+
   if (node.callee.type === "MemberExpression") {
     if (node.callee.optional || node.callee.chain) {
-      return false;
+      return compileChainExpression(node, context);
     }
     if (!compileExpression(node.callee.object, context)) {
       return false;
@@ -1598,10 +1681,19 @@ function compileCallExpression(node, context) {
     if (!compileArguments(node.arguments, context)) {
       return false;
     }
-    if (node.callee.computed) {
-      context.emit(OP.CALL_MEMBER_COMPUTED, node.arguments.length);
+    if (spread) {
+      const flags = spreadFlags(node.arguments);
+      if (node.callee.computed) {
+        context.emit(OP.CALL_MEMBER_COMPUTED_SPREAD, flags);
+      } else {
+        context.emit(OP.CALL_MEMBER_NAMED_SPREAD, node.callee.property.name, flags);
+      }
     } else {
-      context.emit(OP.CALL_MEMBER_NAMED, node.callee.property.name, node.arguments.length);
+      if (node.callee.computed) {
+        context.emit(OP.CALL_MEMBER_COMPUTED, node.arguments.length);
+      } else {
+        context.emit(OP.CALL_MEMBER_NAMED, node.callee.property.name, node.arguments.length);
+      }
     }
     return true;
   }
@@ -1612,7 +1704,11 @@ function compileCallExpression(node, context) {
   if (!compileArguments(node.arguments, context)) {
     return false;
   }
-  context.emit(OP.CALL, node.arguments.length);
+  if (spread) {
+    context.emit(OP.CALL_SPREAD, spreadFlags(node.arguments));
+  } else {
+    context.emit(OP.CALL, node.arguments.length);
+  }
   return true;
 }
 
@@ -1670,10 +1766,19 @@ function compileChainExpression(node, context) {
       return false;
     }
 
-    if (segment.memberCall) {
-      context.emit(OP.CALL_WITH_THIS, segment.arguments.length);
+    if (hasSpreadArgs(segment.arguments)) {
+      const flags = spreadFlags(segment.arguments);
+      if (segment.memberCall) {
+        context.emit(OP.CALL_WITH_THIS_SPREAD, flags);
+      } else {
+        context.emit(OP.CALL_SPREAD, flags);
+      }
     } else {
-      context.emit(OP.CALL, segment.arguments.length);
+      if (segment.memberCall) {
+        context.emit(OP.CALL_WITH_THIS, segment.arguments.length);
+      } else {
+        context.emit(OP.CALL, segment.arguments.length);
+      }
     }
 
     context.emit(OP.STORE_TEMP, currentTemp);
@@ -1691,7 +1796,11 @@ function compileNewExpression(node, context) {
   if (!compileArguments(node.arguments, context)) {
     return false;
   }
-  context.emit(OP.CONSTRUCT, node.arguments.length);
+  if (hasSpreadArgs(node.arguments)) {
+    context.emit(OP.CONSTRUCT_SPREAD, spreadFlags(node.arguments));
+  } else {
+    context.emit(OP.CONSTRUCT, node.arguments.length);
+  }
   return true;
 }
 
@@ -1764,7 +1873,10 @@ function extractChain(node) {
 function compileArguments(args, context) {
   for (const arg of args) {
     if (arg?.type === "SpreadElement") {
-      return false;
+      if (!compileExpression(arg.argument, context)) {
+        return false;
+      }
+      continue;
     }
     if (!compileExpression(arg, context)) {
       return false;
@@ -1772,6 +1884,14 @@ function compileArguments(args, context) {
   }
 
   return true;
+}
+
+function hasSpreadArgs(args) {
+  return args.some((arg) => arg?.type === "SpreadElement");
+}
+
+function spreadFlags(args) {
+  return args.map((arg) => arg?.type === "SpreadElement");
 }
 
 function emitLoadIdentifier(resolution, name, context) {
@@ -1855,6 +1975,30 @@ function popArgs(stack, count) {
   const args = new Array(count);
   for (let index = count - 1; index >= 0; index -= 1) {
     args[index] = stack.pop();
+  }
+  return args;
+}
+
+function popSpreadArgs(stack, flags) {
+  const count = flags.length;
+  const items = new Array(count);
+  for (let index = count - 1; index >= 0; index -= 1) {
+    items[index] = stack.pop();
+  }
+  const args = [];
+  for (let index = 0; index < count; index += 1) {
+    if (flags[index]) {
+      const v = items[index];
+      if (Array.isArray(v)) {
+        args.push(...v);
+      } else if (typeof v === "string") {
+        args.push(...Array.from(v));
+      } else {
+        args.push(...Array.from(v ?? []));
+      }
+    } else {
+      args.push(items[index]);
+    }
   }
   return args;
 }

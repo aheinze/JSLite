@@ -103,6 +103,7 @@ class UserFunction {
 export class Interpreter {
   constructor(outputLines = []) {
     this.outputLines = outputLines;
+    this.builtinsCache = null;
   }
 
   execute(program, globals = {}) {
@@ -138,9 +139,11 @@ export class Interpreter {
 
     env.predeclareVarSlots(program.scope.varSlots);
 
-    const builtins = createBuiltins(this.outputLines);
+    if (!this.builtinsCache) {
+      this.builtinsCache = createBuiltins(this.outputLines);
+    }
     for (const binding of program.scope.builtinBindings ?? []) {
-      env.initializeSlot(binding.slot, "const", builtins[binding.name]);
+      env.initializeSlot(binding.slot, "const", this.builtinsCache[binding.name]);
     }
 
     for (const [name, value] of Object.entries(globals)) {

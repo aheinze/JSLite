@@ -399,6 +399,204 @@ test("TortureTest::testUnicodeStringLengthEmoji", () => {
   assert.equal(engine.eval('"😀".length;'), 1);
 });
 
+// --- Hex, octal, binary, exponent number literals ---
+
+test("LexerNumbersTest::testHexLiterals", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("0xFF"), 255);
+  assert.equal(engine.eval("0XFF"), 255);
+  assert.equal(engine.eval("0x0"), 0);
+  assert.equal(engine.eval("0x10"), 16);
+  assert.equal(engine.eval("0xCAFE"), 0xCAFE);
+});
+
+test("LexerNumbersTest::testBinaryLiterals", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("0b1010"), 10);
+  assert.equal(engine.eval("0B1111"), 15);
+  assert.equal(engine.eval("0b0"), 0);
+  assert.equal(engine.eval("0b11111111"), 255);
+});
+
+test("LexerNumbersTest::testOctalLiterals", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("0o77"), 63);
+  assert.equal(engine.eval("0O10"), 8);
+  assert.equal(engine.eval("0o0"), 0);
+  assert.equal(engine.eval("0o777"), 511);
+});
+
+test("LexerNumbersTest::testExponentNotation", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("1e3"), 1000);
+  assert.equal(engine.eval("1E3"), 1000);
+  assert.equal(engine.eval("1.5e2"), 150);
+  assert.equal(engine.eval("5e-1"), 0.5);
+  assert.equal(engine.eval("1e+3"), 1000);
+  assert.equal(engine.eval("2.5E10"), 25000000000);
+});
+
+test("LexerNumbersTest::testHexInExpressions", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("0xFF + 1"), 256);
+  assert.equal(engine.eval("0b1010 * 2"), 20);
+  assert.equal(engine.eval("0o10 - 1"), 7);
+  assert.equal(engine.eval("1e3 / 10"), 100);
+});
+
+test("LexerNumbersTest::testInvalidNumericLiteralsThrow", () => {
+  const engine = new Engine();
+  assert.throws(() => engine.eval("0x"));
+  assert.throws(() => engine.eval("0b"));
+  assert.throws(() => engine.eval("0o"));
+  assert.throws(() => engine.eval("1e"));
+});
+
+// --- Spread in bytecode arrays and calls ---
+
+test("BytecodeSpreadTest::testSpreadInArrayLiteral", () => {
+  const engine = new Engine();
+  const compiled = engine.compile(`
+    var a = [1, 2, 3];
+    var b = [0, ...a, 4];
+    b;
+  `);
+  assert.ok(compiled.program.bytecode);
+  assert.deepEqual(engine.run(compiled), [0, 1, 2, 3, 4]);
+});
+
+test("BytecodeSpreadTest::testSpreadMultipleArrays", () => {
+  const engine = new Engine();
+  assert.deepEqual(
+    engine.eval("var a = [1, 2]; var b = [3, 4]; [...a, ...b]"),
+    [1, 2, 3, 4]
+  );
+});
+
+test("BytecodeSpreadTest::testSpreadStringInArray", () => {
+  const engine = new Engine();
+  assert.deepEqual(
+    engine.eval('[..."abc"]'),
+    ["a", "b", "c"]
+  );
+});
+
+test("BytecodeSpreadTest::testSpreadInFunctionCall", () => {
+  const engine = new Engine();
+  assert.equal(
+    engine.eval(`
+      function sum(a, b, c) { return a + b + c; }
+      var args = [1, 2, 3];
+      sum(...args);
+    `),
+    6
+  );
+});
+
+test("BytecodeSpreadTest::testSpreadInMethodCall", () => {
+  const engine = new Engine();
+  assert.equal(
+    engine.eval(`
+      var arr = [3, 1, 4, 1, 5];
+      Math.max(...arr);
+    `),
+    5
+  );
+});
+
+test("BytecodeSpreadTest::testSpreadMixedArgs", () => {
+  const engine = new Engine();
+  assert.equal(
+    engine.eval(`
+      function f(a, b, c, d) { return a + b + c + d; }
+      var rest = [2, 3];
+      f(1, ...rest, 4);
+    `),
+    10
+  );
+});
+
+test("BytecodeSpreadTest::testSpreadInNewExpression", () => {
+  class Pair {
+    constructor(a, b) {
+      this.a = a;
+      this.b = b;
+    }
+  }
+  const engine = new Engine();
+  const result = engine.eval(`
+    var args = [10, 20];
+    var p = new Pair(...args);
+    p.a + p.b;
+  `, { Pair });
+  assert.equal(result, 30);
+});
+
+// --- LRU cache eviction ---
+
+test("EngineCacheTest::testCacheEvictsOldEntries", () => {
+  const engine = new Engine({ cacheLimit: 3 });
+  engine.compile("1 + 1");
+  engine.compile("2 + 2");
+  engine.compile("3 + 3");
+  engine.compile("4 + 4");
+
+  assert.equal(engine.compileCache.size, 3);
+  assert.equal(engine.compileCache.has("1 + 1"), false);
+  assert.equal(engine.compileCache.has("4 + 4"), true);
+});
+
+test("EngineCacheTest::testCacheHitRefreshesEntry", () => {
+  const engine = new Engine({ cacheLimit: 3 });
+  engine.compile("1 + 1");
+  engine.compile("2 + 2");
+  engine.compile("3 + 3");
+
+  engine.compile("1 + 1");
+  engine.compile("4 + 4");
+
+  assert.equal(engine.compileCache.has("1 + 1"), true);
+  assert.equal(engine.compileCache.has("2 + 2"), false);
+});
+
+test("EngineCacheTest::testDefaultCacheLimitIs256", () => {
+  const engine = new Engine();
+  assert.equal(engine.compileCacheLimit, 256);
+});
+
+// --- Optional chaining bytecode (extended) ---
+
+test("BytecodeOptionalChainingTest::testCallOnOptionalMemberCompiles", () => {
+  const engine = new Engine();
+  const compiled = engine.compile(`
+    var obj = { a: { b: function() { return 42; } } };
+    obj?.a.b();
+  `);
+  assert.ok(compiled.program.bytecode);
+  assert.equal(engine.run(compiled), 42);
+});
+
+test("BytecodeOptionalChainingTest::testNullCallOnOptionalMember", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("var obj = null; obj?.a.b()"), null);
+});
+
+test("BytecodeOptionalChainingTest::testDeepChainWithCalls", () => {
+  const engine = new Engine();
+  assert.equal(
+    engine.eval(`
+      var a = {b: function() { return {c: 10}; }};
+      a?.b()?.c;
+    `),
+    10
+  );
+});
+
+test("BytecodeOptionalChainingTest::testOptionalCallOnNullFunction", () => {
+  const engine = new Engine();
+  assert.equal(engine.eval("var fn = null; fn?.()"), null);
+});
+
 test("FuzzTest::testFuzzTokenSoup", () => {
   const baseSeed = 42;
   const iterations = 200;
